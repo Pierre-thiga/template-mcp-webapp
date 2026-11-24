@@ -3,7 +3,10 @@ import type { Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
 import { DuplicateRunIdError, LIMITS, timing, type Db, type QuizDoc } from "./db.ts";
+
+const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 
 function json(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -50,7 +53,7 @@ const questionSchema = z.object({
 });
 
 export function buildMcpServer(db: Db, publicUrl: string): McpServer {
-  const server = new McpServer({ name: "quiz-runner", version: "0.2.0" });
+  const server = new McpServer({ name: "quiz-runner", version });
 
   server.registerTool(
     "create_quiz",

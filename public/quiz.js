@@ -306,7 +306,7 @@
     const comment = h("textarea", {
       id: "comment",
       rows: "3",
-      maxlength: "5000",
+      maxlength: String(initial.comment_max),
       placeholder: disabled ? "" : "Notes for this question (optional)",
       readonly: disabled,
       "data-key": "comment",
@@ -410,8 +410,6 @@
         ? null
         : h("button", { type: "button", class: "primary submit", "data-key": "submit", onclick: openReview, text: "Submit answers" }),
     );
-
-
   }
 
   function render({ resetFocus = false } = {}) {

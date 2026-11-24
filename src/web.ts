@@ -1,9 +1,9 @@
 // Interface web du répondant : coquille HTML rendue côté serveur + JS vanilla (public/quiz.js).
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
-import { CONFIDENCE_LEVELS, LIMITS, type Db, type QuizDoc } from "./db.ts";
+import { CONFIDENCE_LEVELS, LIMITS, letterFor, type Db, type QuizDoc } from "./db.ts";
 
-export function escapeHtml(s: string): string {
+function escapeHtml(s: string): string {
   return s
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -41,7 +41,7 @@ function notFoundPage(): string {
 }
 
 function quizPage(doc: QuizDoc): string {
-  const data = { quiz: doc, server_now: new Date().toISOString() };
+  const data = { quiz: doc, server_now: new Date().toISOString(), comment_max: LIMITS.comment };
   return layout(
     doc.name,
     `<noscript><p class="notice">This quiz needs JavaScript.</p></noscript>
@@ -52,7 +52,7 @@ function quizPage(doc: QuizDoc): string {
 }
 
 function patchSchema(choiceCount: number) {
-  const letters = Array.from({ length: choiceCount }, (_, i) => String.fromCharCode(65 + i));
+  const letters = Array.from({ length: choiceCount }, (_, i) => letterFor(i));
   const letter = z.string().refine((l) => letters.includes(l), "unknown option");
   return z
     .object({
@@ -69,6 +69,14 @@ function patchSchema(choiceCount: number) {
 export function webRouter(db: Db): Router {
   const router = Router();
 
+  // Renvoie le quiz s'il accepte encore des modifications, sinon répond 404 / 409.
+  function openQuiz(id: string, res: Response): QuizDoc | undefined {
+    const doc = db.getById(id);
+    if (!doc) res.status(404).json({ error: "Quiz not found" });
+    else if (doc.status !== "open") res.status(409).json({ error: `Quiz is ${doc.status}`, status: doc.status });
+    else return doc;
+  }
+
   router.get("/q/:id", (req, res) => {
     const doc = db.markStarted(req.params.id);
     if (!doc) {
@@ -79,15 +87,8 @@ export function webRouter(db: Db): Router {
   });
 
   router.put("/q/:id/responses/:number", (req, res) => {
-    const doc = db.getById(req.params.id);
-    if (!doc) {
-      res.status(404).json({ error: "Quiz not found" });
-      return;
-    }
-    if (doc.status !== "open") {
-      res.status(409).json({ error: `Quiz is ${doc.status}`, status: doc.status });
-      return;
-    }
+    const doc = openQuiz(req.params.id, res);
+    if (!doc) return;
     const number = Number(req.params.number);
     const question = Number.isInteger(number) ? doc.questions[number - 1] : undefined;
     if (!question) {
@@ -108,15 +109,8 @@ export function webRouter(db: Db): Router {
   });
 
   router.post("/q/:id/submit", (req, res) => {
-    const doc = db.getById(req.params.id);
-    if (!doc) {
-      res.status(404).json({ error: "Quiz not found" });
-      return;
-    }
-    if (doc.status !== "open") {
-      res.status(409).json({ error: `Quiz is ${doc.status}`, status: doc.status });
-      return;
-    }
+    const doc = openQuiz(req.params.id, res);
+    if (!doc) return;
     const updated = db.submit(doc.id)!;
     res.json({ status: updated.status, submitted_at: updated.submitted_at });
   });

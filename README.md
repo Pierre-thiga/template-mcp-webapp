@@ -1,6 +1,8 @@
-# quiz-runner : QCU générés par un agent, passés dans le navigateur
+# template-mcp-webapp : un agent pilote une app web via MCP
 
-Un agent (Claude Code, ou tout client MCP) **crée un QCU** (une seule bonne réponse par question), un humain **le passe dans une page web**, puis l'agent **relit les réponses et corrige**.
+Ce dépôt est un **template** : un serveur MCP qui expose des outils à un agent et sert en même temps une page web à un humain, avec une base SQLite partagée entre les deux. Pour démarrer un autre projet, copie-le et remplace les outils (`src/mcp.ts`), les pages (`src/web.ts`, `public/`) et le document stocké (`src/db.ts`).
+
+L'exemple implémenté s'appelle **quiz-runner** : un agent (Claude Code, ou tout client MCP) **crée un QCU** (une seule bonne réponse par question), un humain **le passe dans une page web**, puis l'agent **relit les réponses et corrige**.
 
 ```
 Agent ──create_quiz──────▶ serveur ──▶ URL /q/<id> ──▶ l'humain répond (autosave)
@@ -18,23 +20,32 @@ Les deux modes partagent la même base (`data.db` à la racine du projet). Si le
 
 ## Installer
 
-Prérequis : Node ≥ 22.18 (le TypeScript s'exécute nativement).
+Prérequis : Node ≥ 22.18 (le TypeScript s'exécute nativement, sans build). Vérifie avec `node -v`.
 
 ```bash
+git clone https://github.com/Pierre-thiga/template-mcp-webapp.git
+cd template-mcp-webapp
 npm install
+npm test
 ```
 
-Le message `ExperimentalWarning: SQLite` dans les logs est normal (module `node:sqlite` intégré à Node).
+`npm test` doit afficher 6 tests en vert. Le message `ExperimentalWarning: SQLite` dans les logs est normal (module `node:sqlite` intégré à Node).
 
 ## Brancher Claude Code
 
-Le fichier `.mcp.json` du dépôt déclare déjà `quiz-runner` en stdio pour Claude Code lancé dans ce dossier. Ailleurs :
+Le fichier `.mcp.json` du dépôt déclare déjà `quiz-runner` en stdio : lance `claude` dans ce dossier et accepte le serveur MCP du projet quand Claude Code le demande au premier lancement. Tape ensuite `/mcp` : `quiz-runner` doit apparaître comme connecté.
+
+Puis demande par exemple : *« Génère un QCU de 10 questions sur les bases de Kubernetes avec quiz-runner, 15 minutes, puis corrige-moi quand j'ai fini. »* L'agent te donne une URL `http://localhost:3000/q/<id>` à ouvrir dans le navigateur.
+
+Pour l'utiliser depuis un autre dossier :
 
 ```bash
 claude mcp add quiz-runner -- node /chemin/vers/template-mcp-webapp/src/stdio.ts
 ```
 
-## Brancher Claude Desktop (onglet Chat)
+## Brancher Claude Desktop (onglet Chat, macOS uniquement)
+
+Le script ci-dessous ne fonctionne que sur macOS. Sous Windows, ajoute l'entrée JSON ci-dessous à la main dans `%APPDATA%\Claude\claude_desktop_config.json`.
 
 Quitte complètement Claude Desktop (⌘Q : l'app réécrit sa config et écraserait la modification), puis depuis le Terminal :
 
@@ -69,7 +80,14 @@ Puis, pour un client MCP en HTTP :
 claude mcp add --transport http quiz-runner http://localhost:3000/mcp
 ```
 
-Exemple de consigne : *« Génère un QCU de 10 questions sur les bases de Kubernetes avec quiz-runner, 15 minutes, puis corrige-moi quand j'ai fini. »*
+## Dépannage
+
+| Symptôme | Cause probable / solution |
+|---|---|
+| `SyntaxError` ou `ERR_UNKNOWN_FILE_EXTENSION` au lancement | Node trop ancien : il faut ≥ 22.18 (`node -v`). |
+| `quiz-runner` absent de `/mcp` dans Claude Code | Le serveur du projet n'a pas été approuvé : relance `claude` dans ce dossier, ou utilise `claude mcp add` (voir plus haut). |
+| Outils absents dans Claude Desktop | L'app était ouverte pendant `npm run desktop:install` : quitte-la (⌘Q), relance le script, rouvre-la. |
+| L'URL du quiz ne s'affiche pas | Le port 3000 est pris par un autre programme (voir les logs MCP) : libère-le ou définis `PORT` et `PUBLIC_URL`. |
 
 ## Outils MCP
 
@@ -125,8 +143,8 @@ src/mcp.ts       les 3 outils MCP + handler Streamable HTTP stateless
 src/stdio.ts     point d'entrée stdio : MCP sur stdin/stdout + pages du quiz
 src/web.ts       page /q/:id et API JSON d'autosave / validation
 public/quiz.js   interface du quiz (vanilla JS)
-scripts/         installation dans Claude Desktop
 public/quiz.css  styles (thème clair / sombre)
+scripts/         installation dans Claude Desktop
 test/            test e2e (client MCP du SDK + fetch)
 ```
 
