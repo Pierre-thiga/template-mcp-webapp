@@ -1,8 +1,9 @@
 {
   "mcpServers": {
-    "ask-human": {
-      "type": "http",
-      "url": "http://localhost:3000/mcp"
+    "quiz-runner": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["src/stdio.ts"]
     }
   }
 }

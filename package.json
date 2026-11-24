@@ -1,8 +1,8 @@
 {
-  "name": "template-mcp-webapp",
-  "version": "0.1.0",
+  "name": "quiz-runner",
+  "version": "0.2.0",
   "private": true,
-  "description": "Template minimal : un agent pose une question via MCP, un humain répond dans une page web.",
+  "description": "Un agent crée un QCU via MCP, un humain le passe dans une page web, l'agent relit les réponses et corrige.",
   "type": "module",
   "engines": {
     "node": ">=22.18"
@@ -11,7 +11,8 @@
     "start": "node src/server.ts",
     "dev": "node --watch src/server.ts",
     "typecheck": "tsc",
-    "test": "node --test \"test/**/*.test.ts\""
+    "test": "node --test \"test/**/*.test.ts\"",
+    "desktop:install": "node scripts/install-claude-desktop.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

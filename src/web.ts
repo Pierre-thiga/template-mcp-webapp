@@ -1,6 +1,7 @@
-// Interface web du répondant : HTML rendu côté serveur, sans JavaScript client.
-import express, { Router } from "express";
-import { ANSWER_MAX, type Answer, type Db, type Session } from "./db.ts";
+// Interface web du répondant : coquille HTML rendue côté serveur + JS vanilla (public/quiz.js).
+import { Router } from "express";
+import { z } from "zod";
+import { CONFIDENCE_LEVELS, LIMITS, type Db, type QuizDoc } from "./db.ts";
 
 export function escapeHtml(s: string): string {
   return s
@@ -11,24 +12,22 @@ export function escapeHtml(s: string): string {
     .replaceAll("'", "&#39;");
 }
 
+// JSON sûr dans un <script> : rien ne peut fermer la balise ni ouvrir un commentaire HTML.
+function scriptJson(data: unknown): string {
+  return JSON.stringify(data)
+    .replaceAll("<", "\\u003c")
+    .replaceAll(" ", "\\u2028")
+    .replaceAll(" ", "\\u2029");
+}
+
 function layout(title: string, body: string): string {
   return `<!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #222; }
-    h1 { font-size: 1.4rem; white-space: pre-wrap; }
-    .meta { color: #666; font-size: .85rem; }
-    textarea { width: 100%; min-height: 8rem; font: inherit; padding: .5rem; box-sizing: border-box; }
-    button { font: inherit; padding: .5rem 1.2rem; margin-top: .5rem; cursor: pointer; }
-    ol { padding-left: 1.2rem; }
-    li { margin-bottom: 1rem; }
-    li p { margin: 0; white-space: pre-wrap; }
-    .closed { background: #f3f3f3; padding: .75rem 1rem; border-radius: 6px; }
-  </style>
+  <link rel="stylesheet" href="/quiz.css">
 </head>
 <body>
 ${body}
@@ -36,67 +35,89 @@ ${body}
 </html>`;
 }
 
-function sessionPage(session: Session, answers: Answer[], error?: string): string {
-  const list = answers.length
-    ? `<ol>${answers
-        .map(
-          (a) =>
-            `<li><p>${escapeHtml(a.text)}</p><span class="meta">${escapeHtml(a.created_at)}</span></li>`,
-        )
-        .join("")}</ol>`
-    : `<p class="meta">Aucune réponse pour le moment.</p>`;
+function notFoundPage(): string {
+  return layout("Quiz not found", `<main class="notice"><h1>Quiz not found</h1><p>Check the link you were given.</p></main>`);
+}
 
-  const form =
-    session.status === "open"
-      ? `<form method="post" action="/s/${session.id}/answers">
-  <label for="text">Votre réponse</label>
-  <textarea id="text" name="text" required maxlength="${ANSWER_MAX}"></textarea>
-  ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ""}
-  <button type="submit">Envoyer</button>
-</form>`
-      : `<p class="closed">Cette session est close : elle n'accepte plus de réponses.</p>`;
-
+function quizPage(doc: QuizDoc): string {
+  const data = { quiz: doc, server_now: new Date().toISOString() };
   return layout(
-    "Question",
-    `<p class="meta">Question posée par un agent</p>
-<h1>${escapeHtml(session.question)}</h1>
-${form}
-<h2>Réponses (${answers.length})</h2>
-${list}`,
+    doc.name,
+    `<noscript><p class="notice">This quiz needs JavaScript.</p></noscript>
+<div id="app" aria-live="polite"></div>
+<script type="application/json" id="quiz-data">${scriptJson(data)}</script>
+<script src="/quiz.js" defer></script>`,
   );
+}
+
+function patchSchema(choiceCount: number) {
+  const letters = Array.from({ length: choiceCount }, (_, i) => String.fromCharCode(65 + i));
+  const letter = z.string().refine((l) => letters.includes(l), "unknown option");
+  return z
+    .object({
+      selected: letter.nullable(),
+      struck: z.array(letter).max(choiceCount).refine((a) => new Set(a).size === a.length, "duplicates"),
+      bookmarked: z.boolean(),
+      confidence: z.enum(CONFIDENCE_LEVELS).nullable(),
+      comment: z.string().max(LIMITS.comment),
+    })
+    .partial()
+    .strict();
 }
 
 export function webRouter(db: Db): Router {
   const router = Router();
-  router.use(express.urlencoded({ extended: false }));
 
-  router.get("/s/:id", (req, res) => {
-    const session = db.getSession(req.params.id);
-    if (!session) {
-      res.status(404).send(layout("Introuvable", "<h1>Session introuvable</h1>"));
+  router.get("/q/:id", (req, res) => {
+    const doc = db.markStarted(req.params.id);
+    if (!doc) {
+      res.status(404).send(notFoundPage());
       return;
     }
-    res.send(sessionPage(session, db.listAnswers(session.id)));
+    res.set("Cache-Control", "no-store").send(quizPage(doc));
   });
 
-  router.post("/s/:id/answers", (req, res) => {
-    const session = db.getSession(req.params.id);
-    if (!session) {
-      res.status(404).send(layout("Introuvable", "<h1>Session introuvable</h1>"));
+  router.put("/q/:id/responses/:number", (req, res) => {
+    const doc = db.getById(req.params.id);
+    if (!doc) {
+      res.status(404).json({ error: "Quiz not found" });
       return;
     }
-    if (session.status !== "open") {
-      res.status(409).send(sessionPage(session, db.listAnswers(session.id)));
+    if (doc.status !== "open") {
+      res.status(409).json({ error: `Quiz is ${doc.status}`, status: doc.status });
       return;
     }
-    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
-    if (!text || text.length > ANSWER_MAX) {
-      const error = `La réponse doit faire entre 1 et ${ANSWER_MAX} caractères.`;
-      res.status(400).send(sessionPage(session, db.listAnswers(session.id), error));
+    const number = Number(req.params.number);
+    const question = Number.isInteger(number) ? doc.questions[number - 1] : undefined;
+    if (!question) {
+      res.status(400).json({ error: "Unknown question number" });
       return;
     }
-    db.addAnswer(session.id, text);
-    res.redirect(303, `/s/${session.id}`);
+    const parsed = patchSchema(question.choices.length).safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid response", issues: parsed.error.issues });
+      return;
+    }
+    const updated = db.patchResponse(doc.id, number, parsed.data);
+    if (!updated || updated.status !== "open") {
+      res.status(409).json({ error: "Quiz is no longer open", status: updated?.status });
+      return;
+    }
+    res.json({ response: updated.questions[number - 1]!.response });
+  });
+
+  router.post("/q/:id/submit", (req, res) => {
+    const doc = db.getById(req.params.id);
+    if (!doc) {
+      res.status(404).json({ error: "Quiz not found" });
+      return;
+    }
+    if (doc.status !== "open") {
+      res.status(409).json({ error: `Quiz is ${doc.status}`, status: doc.status });
+      return;
+    }
+    const updated = db.submit(doc.id)!;
+    res.json({ status: updated.status, submitted_at: updated.submitted_at });
   });
 
   return router;
